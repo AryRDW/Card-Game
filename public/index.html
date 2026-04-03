@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Four-Hand Room Card Game</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Alegreya:wght@500;700;800&family=Manrope:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">Realtime multiplayer card room</p>
+          <h1>Power Suit Room</h1>
+        </div>
+        <p class="hero-copy">Create or join a 4-player room.</p>
+      </header>
+
+      <p class="banner hidden" id="messageBanner"></p>
+
+      <main class="app-grid">
+        <section class="panel entry-panel" id="entryPanel">
+          <h2>Join The Table</h2>
+          <label class="field">
+            <span>Your name</span>
+            <input id="nameInput" type="text" maxlength="24" placeholder="Enter your player name" />
+          </label>
+
+          <div class="entry-actions">
+            <button class="primary-button" id="createRoomButton">Create room</button>
+          </div>
+
+          <div class="divider"><span>or</span></div>
+
+          <label class="field">
+            <span>Room code</span>
+            <input id="roomCodeInput" type="text" maxlength="5" placeholder="ABCDE" />
+          </label>
+          <button class="secondary-button" id="joinRoomButton">Join room</button>
+        </section>
+
+        <section class="panel room-panel hidden" id="roomPanel">
+          <div class="room-topbar">
+            <div>
+              <div class="room-code-row">
+                <strong id="roomCodeBadge">-----</strong>
+                <span class="phase-pill" id="phaseBadge">Lobby</span>
+              </div>
+            </div>
+            <div class="room-actions">
+              <div class="meta-chip" id="powerSuitBadge">Power suit not chosen</div>
+              <button class="ghost-button room-action-button" id="openPointsButton" type="button">Scores</button>
+            </div>
+          </div>
+
+          <p class="status-copy" id="statusCopy"></p>
+
+          <div class="room-content-grid">
+            <section class="subpanel players-subpanel">
+              <div class="subpanel-header">
+                <h3>Players</h3>
+              </div>
+              <div class="players-grid" id="playersGrid"></div>
+            </section>
+
+            <section class="subpanel controls-subpanel">
+              <div class="subpanel-header">
+                <h3>Controls</h3>
+              </div>
+              <div id="controlsArea"></div>
+            </section>
+
+            <section class="subpanel table-subpanel">
+              <div class="subpanel-header">
+                <h3>Table</h3>
+              </div>
+              <div class="table-stack" id="tableArea"></div>
+            </section>
+
+            <section class="subpanel hand-subpanel">
+              <div class="subpanel-header">
+                <h3>Your Hand</h3>
+              </div>
+              <div class="hand-grid" id="handArea"></div>
+            </section>
+
+            <section class="subpanel log-subpanel">
+              <div class="subpanel-header">
+                <h3>Game Log</h3>
+              </div>
+              <ul class="log-list" id="logArea"></ul>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <div class="overlay-backdrop hidden" id="pointsOverlayBackdrop"></div>
+    <aside class="side-panel hidden" id="pointsOverlay" aria-hidden="true">
+      <div class="side-panel__header">
+        <div>
+          <p class="eyebrow">Detailed view</p>
+          <h2>Points Table</h2>
+        </div>
+        <button class="ghost-button room-action-button" id="closePointsButton" type="button">Close</button>
+      </div>
+      <p class="side-panel__copy">Round points and running totals for the room.</p>
+      <div id="pointsArea"></div>
+    </aside>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="./app.js"></script>
+  </body>
+  </html>

@@ -1,0 +1,19 @@
+{
+  "name": "card_game",
+  "version": "1.0.0",
+  "description": "Realtime four-player trick-taking card game with room codes",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js",
+    "test": "node --test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.2.1",
+    "socket.io": "^4.8.3"
+  }
+}

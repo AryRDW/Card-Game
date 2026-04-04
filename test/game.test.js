@@ -6,9 +6,11 @@ const {
   calculateRoundPoints,
   createDeck,
   dealEqually,
+  getBidTotal,
   getForbiddenLastBid,
   isLegalPlay,
   pickTrickWinner,
+  sortHand,
 } = require("../lib/game");
 
 test("dealEqually splits a 52-card deck into 4 hands of 13 cards", () => {
@@ -18,6 +20,10 @@ test("dealEqually splits a 52-card deck into 4 hands of 13 cards", () => {
   hands.forEach((hand) => {
     assert.equal(hand.length, 13);
   });
+});
+
+test("dealEqually throws when the deck cannot be split evenly", () => {
+  assert.throws(() => dealEqually(createDeck().slice(0, 51), 4), /equally/);
 });
 
 test("a player must follow the lead suit when they have it", () => {
@@ -66,6 +72,21 @@ test("the highest card in the lead suit wins when no trump is played", () => {
   assert.equal(winner.playerId, "two");
 });
 
+test("the highest trump wins when multiple power suit cards are played", () => {
+  const winner = pickTrickWinner(
+    [
+      { playerId: "one", card: { suit: "clubs", rank: "A", label: "A\u2663" } },
+      { playerId: "two", card: { suit: "spades", rank: "10", label: "10\u2660" } },
+      { playerId: "three", card: { suit: "spades", rank: "K", label: "K\u2660" } },
+      { playerId: "four", card: { suit: "clubs", rank: "K", label: "K\u2663" } },
+    ],
+    "spades",
+    "clubs",
+  );
+
+  assert.equal(winner.playerId, "three");
+});
+
 test("buildBidCycle starts with the chosen first bidder and wraps around", () => {
   const players = [
     { id: "one" },
@@ -77,6 +98,27 @@ test("buildBidCycle starts with the chosen first bidder and wraps around", () =>
   assert.deepEqual(buildBidCycle(players, "three"), ["three", "four", "one", "two"]);
 });
 
+test("buildBidCycle throws when the chosen first bidder is not in the room", () => {
+  const players = [{ id: "one" }, { id: "two" }];
+
+  assert.throws(() => buildBidCycle(players, "missing"), /First bidder/);
+});
+
+test("sortHand keeps cards in spades, hearts, clubs, diamonds order", () => {
+  const hand = [
+    { id: "diamonds-K", suit: "diamonds", rank: "K" },
+    { id: "clubs-A", suit: "clubs", rank: "A" },
+    { id: "hearts-2", suit: "hearts", rank: "2" },
+    { id: "spades-J", suit: "spades", rank: "J" },
+    { id: "hearts-A", suit: "hearts", rank: "A" },
+  ];
+
+  assert.deepEqual(
+    sortHand(hand, "diamonds").map((card) => card.id),
+    ["spades-J", "hearts-A", "hearts-2", "clubs-A", "diamonds-K"],
+  );
+});
+
 test("getForbiddenLastBid returns the bid that would make the total 13 for the final bidder", () => {
   const players = [
     { bid: 2 },
@@ -86,6 +128,28 @@ test("getForbiddenLastBid returns the bid that would make the total 13 for the f
   ];
 
   assert.equal(getForbiddenLastBid(players), 4);
+});
+
+test("getForbiddenLastBid returns null until only one bidder remains", () => {
+  const players = [
+    { bid: 2 },
+    { bid: null },
+    { bid: 3 },
+    { bid: null },
+  ];
+
+  assert.equal(getForbiddenLastBid(players), null);
+});
+
+test("getBidTotal sums only submitted bids", () => {
+  const players = [
+    { bid: 2 },
+    { bid: null },
+    { bid: 4 },
+    { bid: 0 },
+  ];
+
+  assert.equal(getBidTotal(players), 6);
 });
 
 test("calculateRoundPoints gives 10x tricks for an exact positive bid", () => {

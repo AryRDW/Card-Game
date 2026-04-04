@@ -6,10 +6,12 @@ This project is a realtime browser card game for exactly 4 players. Players join
 
 - Create a room and share a short room code with other players.
 - Join as up to 4 players in the same room.
+- Rejoin from a shared `/party/ROOMCODE?name=YourName` URL.
 - Pick the power suit before shuffling and dealing.
 - Let the host choose who will bid first before the game starts.
 - Shuffle a full 52-card deck and deal 13 cards to each player.
 - Keep every player's hand private so each client only sees their own cards.
+- Display each hand in suit order: `Spades -> Hearts -> Clubs -> Diamonds`.
 - Collect bids from all 4 players one by one in a fixed cycle.
 - Enforce the rule that players must follow the lead suit when possible.
 - Resolve each hand using the rank order you described:
@@ -60,7 +62,7 @@ The winner of a game is not the player with the most hands. Instead:
 - The host chooses the power suit before dealing.
 - The host chooses the first bidder before dealing.
 - Bids are visible to all players after they are submitted in turn.
-- If a player disconnects during an active game, the current game is cancelled and the room returns to the lobby.
+- If a player disconnects during an active game, the game pauses until that seat rejoins or is claimed.
 
 ## Run Locally
 
@@ -75,7 +77,21 @@ Then open `http://localhost:3000` in 4 browser tabs or on 4 different devices on
 
 - `npm start` runs the production server.
 - `npm run dev` runs the server in watch mode.
-- `npm test` runs the rule tests for dealing, following suit, and hand resolution.
+- `npm test` runs the rule tests for dealing, sorting, bidding, scoring, and hand resolution.
+
+## Run Tests
+
+Use either of these commands from the project root:
+
+```bash
+npm test
+```
+
+If PowerShell blocks `npm.ps1`, use:
+
+```bash
+npm.cmd test
+```
 
 ## Project Structure
 

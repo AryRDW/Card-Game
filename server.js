@@ -6,15 +6,17 @@ const express = require("express");
 const { Server } = require("socket.io");
 
 const {
+  MAX_PLAYERS,
+  MIN_PLAYERS,
   SUITS,
   SUIT_NAMES,
-  TOTAL_HANDS,
   buildBidCycle,
   calculateRoundPoints,
-  createDeck,
+  createGameDeck,
   dealEqually,
   getBidTotal,
   getForbiddenLastBid,
+  getTotalHandsForPlayerCount,
   isLegalPlay,
   pickTrickWinner,
   shuffleDeck,
@@ -23,7 +25,6 @@ const {
 
 const PORT = Number(process.env.PORT) || 3000;
 const ROOM_CODE_LENGTH = 5;
-const MAX_PLAYERS = 4;
 const RECENT_MESSAGES_LIMIT = 10;
 
 const app = express();
@@ -72,6 +73,7 @@ function createRoom(code, hostPlayer) {
     code,
     hostId: hostPlayer.id,
     players: [hostPlayer],
+    lastScoredPlayerCount: null,
     state: "lobby",
     powerSuit: null,
     firstBidderId: null,
@@ -90,6 +92,12 @@ function createRoom(code, hostPlayer) {
 
 function addMessage(room, text) {
   room.messages = [text, ...room.messages].slice(0, RECENT_MESSAGES_LIMIT);
+}
+
+function reseatPlayers(room) {
+  room.players.forEach((player, index) => {
+    player.seat = index;
+  });
 }
 
 function generateRoomCode() {
@@ -178,6 +186,14 @@ function getBidOrderNames(room) {
   return room.bidOrder.map((playerId) => getPlayer(room, playerId)?.name).filter(Boolean);
 }
 
+function getRoundHandCount(room) {
+  if (room.players.length < MIN_PLAYERS || room.players.length > MAX_PLAYERS) {
+    return null;
+  }
+
+  return getTotalHandsForPlayerCount(room.players.length);
+}
+
 function clearBidConfiguration(room) {
   room.firstBidderId = null;
   room.currentBidderId = null;
@@ -202,6 +218,53 @@ function resetRoundState(room) {
     player.tricksWon = 0;
     player.lastRoundPoints = null;
   });
+}
+
+function resetScoreboard(room) {
+  room.players.forEach((player) => {
+    player.points = 0;
+    player.lastRoundPoints = null;
+  });
+  room.lastScoredPlayerCount = null;
+}
+
+function handleScoreResetForPlayerCountChange(room) {
+  if (room.lastScoredPlayerCount === null || room.players.length === room.lastScoredPlayerCount) {
+    return;
+  }
+
+  resetRoundState(room);
+  resetScoreboard(room);
+  addMessage(room, "Player count changed after the last game, so all scores were reset to zero.");
+}
+
+function removePlayerFromRoom(room, playerId) {
+  const departingIndex = room.players.findIndex((player) => player.id === playerId);
+
+  if (departingIndex === -1) {
+    return null;
+  }
+
+  const [departingPlayer] = room.players.splice(departingIndex, 1);
+
+  if (!room.players.length) {
+    return departingPlayer;
+  }
+
+  reseatPlayers(room);
+
+  if (room.hostId === departingPlayer.id) {
+    room.hostId = room.players[0].id;
+    addMessage(room, `${room.players[0].name} is now the host.`);
+  }
+
+  if (room.firstBidderId === departingPlayer.id) {
+    room.firstBidderId = null;
+    addMessage(room, "The chosen first bidder left, so the host needs to choose a new first bidder.");
+  }
+
+  handleScoreResetForPlayerCountChange(room);
+  return departingPlayer;
 }
 
 function buildFinalResults(room) {
@@ -229,7 +292,8 @@ function buildRoomState(room, viewerId) {
   const viewer = getPlayer(room, viewerId);
   const leadSuit = room.currentTrick[0]?.card.suit ?? null;
   const bidTotal = getBidTotal(room.players);
-  const forbiddenBid = room.state === "bidding" ? getForbiddenLastBid(room.players, TOTAL_HANDS) : null;
+  const totalHands = getRoundHandCount(room);
+  const forbiddenBid = room.state === "bidding" ? getForbiddenLastBid(room.players, totalHands) : null;
   const paused = isRoomPaused(room);
   const pauseReason = paused ? getPauseReason(room) : null;
   const playableCardIds =
@@ -260,20 +324,23 @@ function buildRoomState(room, viewerId) {
     currentBidderId: room.currentBidderId,
     leaderId: room.leaderId,
     firstBidderId: room.firstBidderId,
+    minPlayers: MIN_PLAYERS,
+    maxPlayers: MAX_PLAYERS,
     bidOrderNames: getBidOrderNames(room),
     bidTotal,
-    totalHands: TOTAL_HANDS,
+    totalHands,
     forbiddenBid,
     handNumber: room.state === "finished" ? room.completedHands : room.completedHands + 1,
     finalReason: room.finalReason,
     isPaused: paused,
     pauseReason,
     canPickPowerSuit: room.state === "lobby" && room.hostId === viewerId,
-    canPickFirstBidder: room.state === "lobby" && room.hostId === viewerId,
+    canPickFirstBidder: room.state === "lobby" && room.hostId === viewerId && room.players.length >= MIN_PLAYERS,
     canStartGame:
       room.state === "lobby" &&
       room.hostId === viewerId &&
-      room.players.length === MAX_PLAYERS &&
+      room.players.length >= MIN_PLAYERS &&
+      room.players.length <= MAX_PLAYERS &&
       room.players.every((player) => player.connected) &&
       room.powerSuit &&
       room.firstBidderId,
@@ -359,7 +426,7 @@ function getDisconnectedSeatOptions(room) {
 }
 
 function beginGame(room) {
-  const shuffledDeck = shuffleDeck(createDeck());
+  const shuffledDeck = shuffleDeck(createGameDeck(room.players.length));
   const hands = dealEqually(shuffledDeck, room.players.length);
   const bidOrder = buildBidCycle(room.players, room.firstBidderId);
 
@@ -391,6 +458,7 @@ function finishGame(room) {
   room.currentBidderId = null;
   room.turnId = null;
   room.finalResults = buildFinalResults(room);
+  room.lastScoredPlayerCount = room.players.length;
 
   room.finalResults.scoreRows.forEach((row) => {
     const player = getPlayer(room, row.playerId);
@@ -434,7 +502,7 @@ io.on("connection", (socket) => {
 
     rooms.set(roomCode, room);
     moveSocketIntoRoom(socket, room, hostPlayer);
-    addMessage(room, `Room ${roomCode} created. Choose the power suit, then start once all 4 players have joined.`);
+    addMessage(room, `Room ${roomCode} created. Choose the power suit, then start once 4 or 5 players have joined.`);
     emitRoomState(room);
   });
 
@@ -476,11 +544,12 @@ io.on("connection", (socket) => {
       return;
     }
 
-    if (room.state === "lobby" && room.players.length < MAX_PLAYERS) {
+    if (["lobby", "finished"].includes(room.state) && room.players.length < MAX_PLAYERS) {
       const player = createPlayer(socket.id, cleanName, room.players.length);
       room.players.push(player);
       moveSocketIntoRoom(socket, room, player);
-      addMessage(room, `${cleanName} joined the room. ${room.players.length} of 4 seats are filled.`);
+      handleScoreResetForPlayerCountChange(room);
+      addMessage(room, `${cleanName} joined the room. ${room.players.length} of ${MAX_PLAYERS} seats are filled.`);
       emitRoomState(room);
       return;
     }
@@ -497,12 +566,12 @@ io.on("connection", (socket) => {
       return;
     }
 
-    if (room.state !== "lobby") {
-      fail(socket, "That room is already in progress and all seats are occupied.");
+    if (["bidding", "playing"].includes(room.state)) {
+      fail(socket, "That game is already in progress, so the player count cannot change right now.");
       return;
     }
 
-    fail(socket, "That room already has 4 active players.");
+    fail(socket, `That room already has ${MAX_PLAYERS} active players.`);
   });
 
   socket.on("claimSeat", ({ roomCode, playerId, name }) => {
@@ -594,6 +663,11 @@ io.on("connection", (socket) => {
       return;
     }
 
+    if (room.players.length < MIN_PLAYERS) {
+      fail(socket, `Choose the first bidder once at least ${MIN_PLAYERS} players are seated.`);
+      return;
+    }
+
     const chosenPlayer = getPlayer(room, playerId);
 
     if (!chosenPlayer) {
@@ -625,8 +699,12 @@ io.on("connection", (socket) => {
       return;
     }
 
-    if (room.players.length !== MAX_PLAYERS || room.players.some((roomPlayer) => !roomPlayer.connected)) {
-      fail(socket, "A game starts only when exactly 4 connected players are in the room.");
+    if (
+      room.players.length < MIN_PLAYERS ||
+      room.players.length > MAX_PLAYERS ||
+      room.players.some((roomPlayer) => !roomPlayer.connected)
+    ) {
+      fail(socket, "A game starts only when 4 or 5 connected players are in the room.");
       return;
     }
 
@@ -664,15 +742,16 @@ io.on("connection", (socket) => {
     }
 
     const numericBid = Number(bid);
-    const forbiddenBid = getForbiddenLastBid(room.players, TOTAL_HANDS);
+    const totalHands = getRoundHandCount(room);
+    const forbiddenBid = getForbiddenLastBid(room.players, totalHands);
 
     if (room.currentBidderId !== player.id) {
       fail(socket, "Wait for your turn in the bidding cycle.");
       return;
     }
 
-    if (!Number.isInteger(numericBid) || numericBid < 0 || numericBid > 13) {
-      fail(socket, "Bid a whole number from 0 to 13.");
+    if (!Number.isInteger(numericBid) || numericBid < 0 || numericBid > totalHands) {
+      fail(socket, `Bid a whole number from 0 to ${totalHands}.`);
       return;
     }
 
@@ -681,10 +760,10 @@ io.on("connection", (socket) => {
       return;
     }
 
-    if (forbiddenBid !== null && forbiddenBid >= 0 && forbiddenBid <= TOTAL_HANDS && numericBid === forbiddenBid) {
+    if (forbiddenBid !== null && forbiddenBid >= 0 && forbiddenBid <= totalHands && numericBid === forbiddenBid) {
       fail(
         socket,
-        `As the last bidder, you cannot choose ${forbiddenBid} because total bids cannot equal ${TOTAL_HANDS}.`,
+        `As the last bidder, you cannot choose ${forbiddenBid} because total bids cannot equal ${totalHands}.`,
       );
       return;
     }
@@ -813,7 +892,7 @@ io.on("connection", (socket) => {
     }
 
     resetRoundState(room);
-    addMessage(room, "Room reset. Choose a new power suit and start the next game when all 4 seats are ready.");
+    addMessage(room, "Room reset. Choose a new power suit and start the next game when 4 or 5 players are ready.");
     emitRoomState(room);
   });
 
@@ -836,11 +915,21 @@ io.on("connection", (socket) => {
 
     if (["bidding", "playing"].includes(room.state)) {
       addMessage(room, `${departingPlayer.name} disconnected. ${getPauseReason(room)}`);
+      emitRoomState(room);
+      return;
+    }
+
+    const removedPlayer = removePlayerFromRoom(room, departingPlayer.id);
+
+    if (!room.players.length) {
+      rooms.delete(room.code);
+      return;
+    }
+
+    if (removedPlayer) {
+      addMessage(room, `${removedPlayer.name} left the room.`);
     } else {
-      addMessage(
-        room,
-        `${departingPlayer.name} disconnected. Seat ${departingPlayer.seat + 1} is reserved until that player returns or someone claims it.`,
-      );
+      addMessage(room, `${departingPlayer.name} left the room.`);
     }
 
     emitRoomState(room);

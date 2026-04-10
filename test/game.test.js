@@ -5,9 +5,11 @@ const {
   buildBidCycle,
   calculateRoundPoints,
   createDeck,
+  createGameDeck,
   dealEqually,
   getBidTotal,
   getForbiddenLastBid,
+  getTotalHandsForPlayerCount,
   isLegalPlay,
   pickTrickWinner,
   sortHand,
@@ -24,6 +26,23 @@ test("dealEqually splits a 52-card deck into 4 hands of 13 cards", () => {
 
 test("dealEqually throws when the deck cannot be split evenly", () => {
   assert.throws(() => dealEqually(createDeck().slice(0, 51), 4), /equally/);
+});
+
+test("createGameDeck removes 2 of diamonds and 2 of clubs for 5-player games", () => {
+  const deck = createGameDeck(5);
+
+  assert.equal(deck.length, 50);
+  assert.equal(deck.some((card) => card.id === "diamonds-2"), false);
+  assert.equal(deck.some((card) => card.id === "clubs-2"), false);
+});
+
+test("dealEqually splits the 5-player deck into 5 hands of 10 cards", () => {
+  const hands = dealEqually(createGameDeck(5), 5);
+
+  assert.equal(hands.length, 5);
+  hands.forEach((hand) => {
+    assert.equal(hand.length, 10);
+  });
 });
 
 test("a player must follow the lead suit when they have it", () => {
@@ -150,6 +169,11 @@ test("getBidTotal sums only submitted bids", () => {
   ];
 
   assert.equal(getBidTotal(players), 6);
+});
+
+test("getTotalHandsForPlayerCount returns 13 for 4 players and 10 for 5 players", () => {
+  assert.equal(getTotalHandsForPlayerCount(4), 13);
+  assert.equal(getTotalHandsForPlayerCount(5), 10);
 });
 
 test("calculateRoundPoints gives 10x tricks for an exact positive bid", () => {

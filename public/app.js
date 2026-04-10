@@ -38,7 +38,8 @@ const seatClaimMessage = document.getElementById("seatClaimMessage");
 const seatClaimList = document.getElementById("seatClaimList");
 const dismissSeatClaimButton = document.getElementById("dismissSeatClaimButton");
 
-const TOTAL_SEATS = 4;
+const MIN_PLAYERS = 4;
+const MAX_PLAYERS = 5;
 
 const suitLabels = {
   spades: "Spades \u2660",
@@ -183,39 +184,43 @@ function setPointsOpen(nextValue) {
 }
 
 function statusText(room) {
+  const minPlayers = room.minPlayers ?? MIN_PLAYERS;
+  const maxPlayers = room.maxPlayers ?? MAX_PLAYERS;
   const connectedPlayers = room.players.filter((player) => player.isConnected);
   const disconnectedPlayers = room.players.filter((player) => !player.isConnected);
-  const openSeats = TOTAL_SEATS - room.players.length;
+  const openSeats = maxPlayers - room.players.length;
 
   if (room.isPaused && room.pauseReason) {
     return room.pauseReason;
   }
 
   if (room.state === "lobby") {
-    if (connectedPlayers.length < TOTAL_SEATS) {
+    if (connectedPlayers.length < minPlayers) {
       const statusParts = [];
 
       if (disconnectedPlayers.length) {
         statusParts.push(`waiting for ${formatNames(disconnectedPlayers.map((player) => player.name))} to reconnect or have that seat claimed`);
       }
 
-      if (openSeats > 0) {
-        statusParts.push(`waiting for ${openSeats} more player${openSeats === 1 ? "" : "s"} to join`);
+      const requiredPlayers = minPlayers - connectedPlayers.length;
+
+      if (requiredPlayers > 0) {
+        statusParts.push(`waiting for ${requiredPlayers} more player${requiredPlayers === 1 ? "" : "s"} to join`);
       }
 
       return `${statusParts[0].charAt(0).toUpperCase()}${statusParts[0].slice(1)}${statusParts.length > 1 ? ` and ${statusParts[1]}` : ""}.`;
     }
 
     if (!room.powerSuitLabel) {
-      return "All four players are seated. The host still needs to choose the power suit.";
+      return `${connectedPlayers.length} players are seated. The host still needs to choose the power suit.${openSeats > 0 ? ` You can also wait for ${openSeats} more player${openSeats === 1 ? "" : "s"}.` : ""}`;
     }
 
     if (!room.firstBidderId) {
-      return "Power suit is set. The host now chooses who will bid first.";
+      return `Power suit is set for a ${connectedPlayers.length}-player game. The host now chooses who will bid first.`;
     }
 
     const firstBidder = room.players.find((player) => player.id === room.firstBidderId);
-    return `Power suit is set and ${firstBidder?.name || "a player"} will bid first. The host can start the game now.`;
+    return `Power suit is set and ${firstBidder?.name || "a player"} will bid first. The host can start the ${connectedPlayers.length}-player game now${openSeats > 0 ? ` or wait for ${openSeats} more player${openSeats === 1 ? "" : "s"}` : ""}.`;
   }
 
   if (room.state === "bidding") {
@@ -305,6 +310,8 @@ function renderPlayers(room) {
 }
 
 function renderLobbyControls(room) {
+  const minPlayers = room.minPlayers ?? MIN_PLAYERS;
+  const maxPlayers = room.maxPlayers ?? MAX_PLAYERS;
   const suitButtons = Object.entries(suitLabels)
     .map(
       ([suit, label]) => `
@@ -335,15 +342,20 @@ function renderLobbyControls(room) {
     ? "Choose the power suit before the cards are shuffled and dealt."
     : "The host chooses the power suit in the lobby.";
   const bidderText =
-    room.players.length === TOTAL_SEATS
+    room.players.length >= minPlayers
       ? "The host also chooses who will make the first bid. Bidding then continues in seat order from that player."
-      : "The first bidder can be chosen once all 4 seats have been created.";
+      : `The first bidder can be chosen once at least ${minPlayers} players have joined.`;
+  const readinessText =
+    room.players.length >= minPlayers
+      ? `This room can start with ${room.players.length} players.${room.players.length < maxPlayers ? ` One more player can still join before the deal.` : ""}`
+      : `A game can start with ${minPlayers} or ${maxPlayers} players.`;
 
   return `
     <div class="controls-stack">
       <div class="callout">${helperText}</div>
       <div class="suit-grid">${suitButtons}</div>
       <div class="callout">${bidderText}</div>
+      <div class="callout">${readinessText}</div>
       <div class="selection-grid">${bidderButtons}</div>
       <button class="primary-button" id="startGameButton" ${room.canStartGame ? "" : "disabled"}>
         Deal cards and start bidding

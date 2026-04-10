@@ -15,8 +15,10 @@ const nameInput = document.getElementById("nameInput");
 const roomCodeInput = document.getElementById("roomCodeInput");
 const createRoomButton = document.getElementById("createRoomButton");
 const joinRoomButton = document.getElementById("joinRoomButton");
+const joinViewerButton = document.getElementById("joinViewerButton");
 const roomCodeBadge = document.getElementById("roomCodeBadge");
 const phaseBadge = document.getElementById("phaseBadge");
+const memberBadge = document.getElementById("memberBadge");
 const powerSuitBadge = document.getElementById("powerSuitBadge");
 const openPointsButton = document.getElementById("openPointsButton");
 const closePointsButton = document.getElementById("closePointsButton");
@@ -25,6 +27,8 @@ const pointsOverlayBackdrop = document.getElementById("pointsOverlayBackdrop");
 const statusCopy = document.getElementById("statusCopy");
 const handSubpanel = document.querySelector(".hand-subpanel");
 const playersGrid = document.getElementById("playersGrid");
+const viewersSection = document.getElementById("viewersSection");
+const viewersList = document.getElementById("viewersList");
 const controlsArea = document.getElementById("controlsArea");
 const pointsArea = document.getElementById("pointsArea");
 const tableArea = document.getElementById("tableArea");
@@ -83,7 +87,7 @@ function requireName() {
   const name = nameInput.value.trim();
 
   if (!name) {
-    showMessage("Enter your player name first.");
+    showMessage("Enter your name first.");
     nameInput.focus();
     return null;
   }
@@ -125,10 +129,12 @@ function formatNames(names) {
 function getRouteContext() {
   const match = window.location.pathname.match(/^\/party\/([A-Z0-9]{1,12})$/i);
   const params = new URLSearchParams(window.location.search);
+  const routeRole = params.get("role");
 
   return {
     roomCode: match ? match[1].toUpperCase() : "",
     name: String(params.get("name") || "").trim(),
+    role: routeRole === "viewer" ? "viewer" : "player",
   };
 }
 
@@ -145,14 +151,19 @@ function prefillFromRoute() {
 }
 
 function syncPartyUrl(room) {
-  const viewer = room.players.find((player) => player.id === room.yourPlayerId);
-
-  if (!viewer) {
+  if (!room.yourName) {
     return;
   }
 
   const nextPath = `/party/${encodeURIComponent(room.roomCode)}`;
-  const nextSearch = `?name=${encodeURIComponent(viewer.name)}`;
+  const params = new URLSearchParams();
+  params.set("name", room.yourName);
+
+  if (room.memberRole === "viewer") {
+    params.set("role", "viewer");
+  }
+
+  const nextSearch = `?${params.toString()}`;
 
   if (window.location.pathname !== nextPath || window.location.search !== nextSearch) {
     window.history.replaceState({}, "", `${nextPath}${nextSearch}`);
@@ -172,6 +183,15 @@ function attemptRouteJoin() {
 
   state.autoJoinAttempted = true;
   socket.emit("joinRoom", route);
+}
+
+function memberBadgeText(room) {
+  if (room.memberRole === "viewer") {
+    return "Viewer";
+  }
+
+  const currentPlayer = room.players.find((player) => player.id === room.yourPlayerId);
+  return currentPlayer ? `Seat ${currentPlayer.seat}` : "Player";
 }
 
 function setPointsOpen(nextValue) {
@@ -304,6 +324,29 @@ function renderPlayers(room) {
               : ""
           }
         </article>
+      `;
+    })
+    .join("");
+}
+
+function renderViewers(room) {
+  const viewers = room.viewers || [];
+
+  viewersSection.classList.toggle("hidden", viewers.length === 0);
+
+  if (!viewers.length) {
+    viewersList.innerHTML = "";
+    return;
+  }
+
+  viewersList.innerHTML = viewers
+    .map((viewer) => {
+      const isSelf = room.memberRole === "viewer" && viewer.id === room.yourViewerId;
+
+      return `
+        <span class="viewer-chip ${isSelf ? "viewer-chip--self" : ""}">
+          ${viewer.name}${isSelf ? " (you)" : ""}
+        </span>
       `;
     })
     .join("");
@@ -815,14 +858,19 @@ function renderRoom() {
   entryPanel.classList.add("hidden");
   roomPanel.classList.remove("hidden");
   roomPanel.classList.toggle("room-panel--cards-live", room.state !== "lobby");
-  handSubpanel.classList.toggle("hidden", room.state === "lobby" && room.yourHand.length === 0);
+  handSubpanel.classList.toggle(
+    "hidden",
+    room.memberRole === "viewer" || (room.state === "lobby" && room.yourHand.length === 0),
+  );
 
   roomCodeBadge.textContent = room.roomCode;
   phaseBadge.textContent = phaseLabel(room.state);
+  memberBadge.textContent = memberBadgeText(room);
   renderPowerSuitBadge(room);
   statusCopy.textContent = statusText(room);
 
   renderPlayers(room);
+  renderViewers(room);
   renderControls(room);
   renderPointsTable(room);
   renderTablePanel(room);
@@ -875,7 +923,7 @@ createRoomButton.addEventListener("click", () => {
   socket.emit("createRoom", { name });
 });
 
-joinRoomButton.addEventListener("click", () => {
+function joinRoomWithRole(role) {
   if (!socket) {
     showMessage("Start the Node server with `npm start` to create and join live rooms.");
     return;
@@ -901,7 +949,15 @@ joinRoomButton.addEventListener("click", () => {
   }
 
   state.pendingSeatClaim = null;
-  socket.emit("joinRoom", { name, roomCode });
+  socket.emit("joinRoom", { name, roomCode, role });
+}
+
+joinRoomButton.addEventListener("click", () => {
+  joinRoomWithRole("player");
+});
+
+joinViewerButton.addEventListener("click", () => {
+  joinRoomWithRole("viewer");
 });
 
 nameInput.addEventListener("input", () => {
@@ -945,6 +1001,13 @@ if (socket) {
 
   socket.on("serverError", (message) => {
     showMessage(message);
+  });
+
+  socket.on("roomClosed", (message) => {
+    state.room = null;
+    state.pendingSeatClaim = null;
+    showMessage(message);
+    renderRoom();
   });
 
   attemptRouteJoin();

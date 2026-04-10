@@ -24,7 +24,7 @@
           <p class="eyebrow">Realtime multiplayer card room</p>
           <h1>Power Suit Room</h1>
         </div>
-        <p class="hero-copy">Create or join a 4-5 player room.</p>
+        <p class="hero-copy">Create, join, or watch a 4-5 player room.</p>
       </header>
 
       <p class="banner hidden" id="messageBanner"></p>
@@ -34,7 +34,7 @@
           <h2>Join The Table</h2>
           <label class="field">
             <span>Your name</span>
-            <input id="nameInput" type="text" maxlength="24" placeholder="Enter your player name" />
+            <input id="nameInput" type="text" maxlength="24" placeholder="Enter your name" />
           </label>
 
           <div class="entry-actions">
@@ -47,7 +47,10 @@
             <span>Room code</span>
             <input id="roomCodeInput" type="text" maxlength="5" placeholder="ABCDE" />
           </label>
-          <button class="secondary-button" id="joinRoomButton">Join room</button>
+          <div class="entry-actions entry-actions--join">
+            <button class="secondary-button" id="joinRoomButton">Join as player</button>
+            <button class="ghost-button" id="joinViewerButton">Join as viewer</button>
+          </div>
 
           <section class="claim-panel hidden" id="seatClaimPanel">
             <div class="subpanel-header">
@@ -68,6 +71,7 @@
               </div>
             </div>
             <div class="room-actions">
+              <div class="meta-chip" id="memberBadge">Player</div>
               <div class="meta-chip" id="powerSuitBadge">Power suit not chosen</div>
               <button class="ghost-button room-action-button" id="openPointsButton" type="button">Scores</button>
             </div>
@@ -88,6 +92,10 @@
                 <h3>Players</h3>
               </div>
               <div class="players-grid" id="playersGrid"></div>
+              <div class="viewers-panel hidden" id="viewersSection">
+                <p class="eyebrow">Viewers</p>
+                <div class="viewer-chip-list" id="viewersList"></div>
+              </div>
             </section>
 
             <section class="subpanel controls-subpanel">

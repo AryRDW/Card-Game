@@ -68,11 +68,20 @@ function createPlayer(socketId, name, seat) {
   };
 }
 
+function createViewer(socketId, name) {
+  return {
+    id: randomUUID(),
+    socketId,
+    name,
+  };
+}
+
 function createRoom(code, hostPlayer) {
   return {
     code,
     hostId: hostPlayer.id,
     players: [hostPlayer],
+    viewers: [],
     lastScoredPlayerCount: null,
     state: "lobby",
     powerSuit: null,
@@ -122,6 +131,10 @@ function getPlayer(room, playerId) {
   return room.players.find((player) => player.id === playerId);
 }
 
+function getViewer(room, viewerId) {
+  return room.viewers.find((viewer) => viewer.id === viewerId);
+}
+
 function getPlayerForSocket(room, socket) {
   const player = getPlayer(room, socket.data.playerId);
 
@@ -146,6 +159,12 @@ function findPlayerByName(room, rawName, { connected } = {}) {
 
     return normalizeName(player.name) === normalizedName;
   });
+}
+
+function findViewerByName(room, rawName) {
+  const normalizedName = normalizeName(rawName);
+
+  return room.viewers.find((viewer) => normalizeName(viewer.name) === normalizedName);
 }
 
 function getDisconnectedPlayers(room) {
@@ -267,6 +286,17 @@ function removePlayerFromRoom(room, playerId) {
   return departingPlayer;
 }
 
+function removeViewerFromRoom(room, viewerId) {
+  const departingIndex = room.viewers.findIndex((viewer) => viewer.id === viewerId);
+
+  if (departingIndex === -1) {
+    return null;
+  }
+
+  const [departingViewer] = room.viewers.splice(departingIndex, 1);
+  return departingViewer;
+}
+
 function buildFinalResults(room) {
   const scoreRows = room.players.map((player) => {
     const matchedBid = player.bid === player.tricksWon;
@@ -288,8 +318,10 @@ function buildFinalResults(room) {
   };
 }
 
-function buildRoomState(room, viewerId) {
-  const viewer = getPlayer(room, viewerId);
+function buildRoomState(room, { memberRole = null, memberId = null } = {}) {
+  const player = memberRole === "player" ? getPlayer(room, memberId) : null;
+  const viewer = memberRole === "viewer" ? getViewer(room, memberId) : null;
+  const currentMember = player ?? viewer;
   const leadSuit = room.currentTrick[0]?.card.suit ?? null;
   const bidTotal = getBidTotal(room.players);
   const totalHands = getRoundHandCount(room);
@@ -297,9 +329,9 @@ function buildRoomState(room, viewerId) {
   const paused = isRoomPaused(room);
   const pauseReason = paused ? getPauseReason(room) : null;
   const playableCardIds =
-    room.state === "playing" && !paused && room.turnId === viewerId && viewer
-      ? viewer.hand
-          .filter((card) => isLegalPlay(viewer.hand, card, leadSuit))
+    room.state === "playing" && !paused && room.turnId === player?.id && player
+      ? player.hand
+          .filter((card) => isLegalPlay(player.hand, card, leadSuit))
           .map((card) => card.id)
       : [];
   const finalResults = room.finalResults
@@ -334,24 +366,27 @@ function buildRoomState(room, viewerId) {
     finalReason: room.finalReason,
     isPaused: paused,
     pauseReason,
-    canPickPowerSuit: room.state === "lobby" && room.hostId === viewerId,
-    canPickFirstBidder: room.state === "lobby" && room.hostId === viewerId && room.players.length >= MIN_PLAYERS,
+    memberRole,
+    yourName: currentMember?.name ?? "",
+    canPickPowerSuit: room.state === "lobby" && room.hostId === player?.id,
+    canPickFirstBidder: room.state === "lobby" && room.hostId === player?.id && room.players.length >= MIN_PLAYERS,
     canStartGame:
       room.state === "lobby" &&
-      room.hostId === viewerId &&
+      room.hostId === player?.id &&
       room.players.length >= MIN_PLAYERS &&
       room.players.length <= MAX_PLAYERS &&
       room.players.every((player) => player.connected) &&
       room.powerSuit &&
       room.firstBidderId,
     canSubmitBid:
-      room.state === "bidding" && !paused && room.currentBidderId === viewerId && viewer?.bid === null,
-    canPlay: room.state === "playing" && !paused && room.turnId === viewerId,
-    canPrepareNextRound: room.state === "finished" && room.hostId === viewerId,
+      room.state === "bidding" && !paused && room.currentBidderId === player?.id && player?.bid === null,
+    canPlay: room.state === "playing" && !paused && room.turnId === player?.id,
+    canPrepareNextRound: room.state === "finished" && room.hostId === player?.id,
     playableCardIds,
-    yourPlayerId: viewerId,
-    yourBid: viewer?.bid ?? null,
-    yourHand: viewer ? sortHand(viewer.hand, room.powerSuit) : [],
+    yourPlayerId: player?.id ?? null,
+    yourViewerId: viewer?.id ?? null,
+    yourBid: player?.bid ?? null,
+    yourHand: player ? sortHand(player.hand, room.powerSuit) : [],
     players: room.players.map((player) => ({
       id: player.id,
       name: player.name,
@@ -369,6 +404,10 @@ function buildRoomState(room, viewerId) {
       isTurn: player.id === room.turnId,
       metBid: room.state === "finished" ? player.bid === player.tricksWon : null,
     })),
+    viewers: room.viewers.map((viewer) => ({
+      id: viewer.id,
+      name: viewer.name,
+    })),
     currentTrick: room.currentTrick.map((play) => ({
       playerId: play.playerId,
       playerName: play.playerName ?? getPlayer(room, play.playerId)?.name ?? "Unknown player",
@@ -384,25 +423,59 @@ function emitRoomState(room) {
   room.players
     .filter((player) => player.connected && player.socketId)
     .forEach((player) => {
-      io.to(player.socketId).emit("roomState", buildRoomState(room, player.id));
+      io.to(player.socketId).emit("roomState", buildRoomState(room, { memberRole: "player", memberId: player.id }));
     });
+
+  room.viewers
+    .filter((viewer) => viewer.socketId)
+    .forEach((viewer) => {
+      io.to(viewer.socketId).emit("roomState", buildRoomState(room, { memberRole: "viewer", memberId: viewer.id }));
+    });
+}
+
+function closeRoom(room, message) {
+  const socketIds = [
+    ...room.players.filter((player) => player.connected && player.socketId).map((player) => player.socketId),
+    ...room.viewers.filter((viewer) => viewer.socketId).map((viewer) => viewer.socketId),
+  ];
+
+  socketIds.forEach((socketId) => {
+    const connectedSocket = io.sockets.sockets.get(socketId);
+
+    if (!connectedSocket) {
+      return;
+    }
+
+    connectedSocket.emit("roomClosed", message);
+    connectedSocket.leave(room.code);
+    clearSocketRoomState(connectedSocket);
+  });
+
+  rooms.delete(room.code);
 }
 
 function fail(socket, message) {
   socket.emit("serverError", message);
 }
 
-function moveSocketIntoRoom(socket, room, player) {
+function moveSocketIntoRoom(socket, room, member, memberRole) {
   socket.join(room.code);
   socket.data.roomCode = room.code;
-  socket.data.playerId = player.id;
-  player.socketId = socket.id;
-  player.connected = true;
+  socket.data.memberRole = memberRole;
+  socket.data.playerId = memberRole === "player" ? member.id : null;
+  socket.data.viewerId = memberRole === "viewer" ? member.id : null;
+  member.socketId = socket.id;
+
+  if (memberRole === "player") {
+    member.connected = true;
+  }
 }
 
 function clearSocketRoomState(socket) {
   socket.data.roomCode = null;
+  socket.data.memberRole = null;
   socket.data.playerId = null;
+  socket.data.viewerId = null;
 }
 
 function announceSeatReturn(room, player, previousName) {
@@ -501,12 +574,12 @@ io.on("connection", (socket) => {
     const room = createRoom(roomCode, hostPlayer);
 
     rooms.set(roomCode, room);
-    moveSocketIntoRoom(socket, room, hostPlayer);
+    moveSocketIntoRoom(socket, room, hostPlayer, "player");
     addMessage(room, `Room ${roomCode} created. Choose the power suit, then start once 4 or 5 players have joined.`);
     emitRoomState(room);
   });
 
-  socket.on("joinRoom", ({ name, roomCode }) => {
+  socket.on("joinRoom", ({ name, roomCode, role }) => {
     if (socket.data.roomCode) {
       fail(socket, "You are already inside a room.");
       return;
@@ -516,6 +589,7 @@ io.on("connection", (socket) => {
     const cleanCode = String(roomCode || "")
       .trim()
       .toUpperCase();
+    const membershipRole = role === "viewer" ? "viewer" : "player";
     const room = rooms.get(cleanCode);
 
     if (!cleanName) {
@@ -525,6 +599,25 @@ io.on("connection", (socket) => {
 
     if (!room) {
       fail(socket, "That room code was not found.");
+      return;
+    }
+
+    if (membershipRole === "viewer") {
+      if (findPlayerByName(room, cleanName) || findViewerByName(room, cleanName)) {
+        fail(socket, "That name is already being used in this room.");
+        return;
+      }
+
+      const viewer = createViewer(socket.id, cleanName);
+      room.viewers.push(viewer);
+      moveSocketIntoRoom(socket, room, viewer, "viewer");
+      addMessage(room, `${cleanName} joined as a viewer.`);
+      emitRoomState(room);
+      return;
+    }
+
+    if (findViewerByName(room, cleanName)) {
+      fail(socket, "That name is already being used by a viewer in this room.");
       return;
     }
 
@@ -538,7 +631,7 @@ io.on("connection", (socket) => {
     if (returningPlayer) {
       const previousName = returningPlayer.name;
       returningPlayer.name = cleanName;
-      moveSocketIntoRoom(socket, room, returningPlayer);
+      moveSocketIntoRoom(socket, room, returningPlayer, "player");
       announceSeatReturn(room, returningPlayer, previousName);
       emitRoomState(room);
       return;
@@ -547,7 +640,7 @@ io.on("connection", (socket) => {
     if (["lobby", "finished"].includes(room.state) && room.players.length < MAX_PLAYERS) {
       const player = createPlayer(socket.id, cleanName, room.players.length);
       room.players.push(player);
-      moveSocketIntoRoom(socket, room, player);
+      moveSocketIntoRoom(socket, room, player, "player");
       handleScoreResetForPlayerCountChange(room);
       addMessage(room, `${cleanName} joined the room. ${room.players.length} of ${MAX_PLAYERS} seats are filled.`);
       emitRoomState(room);
@@ -596,6 +689,11 @@ io.on("connection", (socket) => {
       return;
     }
 
+    if (findViewerByName(room, cleanName)) {
+      fail(socket, "That name is already being used by a viewer in this room.");
+      return;
+    }
+
     if (findPlayerByName(room, cleanName, { connected: true })) {
       fail(socket, "That name is already being used in this room.");
       return;
@@ -610,7 +708,7 @@ io.on("connection", (socket) => {
 
     const previousName = targetSeat.name;
     targetSeat.name = cleanName;
-    moveSocketIntoRoom(socket, room, targetSeat);
+    moveSocketIntoRoom(socket, room, targetSeat, "player");
     announceSeatReturn(room, targetSeat, previousName);
     emitRoomState(room);
   });
@@ -903,6 +1001,16 @@ io.on("connection", (socket) => {
       return;
     }
 
+    const departingViewer = getViewer(room, socket.data.viewerId);
+
+    if (departingViewer && departingViewer.socketId === socket.id) {
+      removeViewerFromRoom(room, departingViewer.id);
+      clearSocketRoomState(socket);
+      addMessage(room, `${departingViewer.name} stopped viewing.`);
+      emitRoomState(room);
+      return;
+    }
+
     const departingPlayer = getPlayer(room, socket.data.playerId);
 
     if (!departingPlayer || departingPlayer.socketId !== socket.id) {
@@ -922,7 +1030,7 @@ io.on("connection", (socket) => {
     const removedPlayer = removePlayerFromRoom(room, departingPlayer.id);
 
     if (!room.players.length) {
-      rooms.delete(room.code);
+      closeRoom(room, "All seated players left, so this room has closed.");
       return;
     }
 

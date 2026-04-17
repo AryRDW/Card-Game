@@ -164,11 +164,6 @@ input {
 
 .entry-actions {
   display: grid;
-  gap: 0.7rem;
-}
-
-.entry-actions--join {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .primary-button,
@@ -441,39 +436,6 @@ button:disabled {
 
 .player-card__result {
   margin-top: 0.55rem;
-}
-
-.viewers-panel {
-  margin-top: 0.8rem;
-  padding-top: 0.8rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.viewers-panel .eyebrow {
-  margin-bottom: 0.45rem;
-}
-
-.viewer-chip-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
-}
-
-.viewer-chip {
-  display: inline-flex;
-  align-items: center;
-  padding: 0.34rem 0.6rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  color: var(--text-muted);
-  font-size: 0.82rem;
-}
-
-.viewer-chip--self {
-  background: rgba(241, 196, 107, 0.14);
-  border-color: rgba(241, 196, 107, 0.28);
-  color: var(--text-main);
 }
 
 .controls-stack,
@@ -971,10 +933,6 @@ body.points-open {
   .bid-row,
   .suit-grid,
   .selection-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .entry-actions--join {
     grid-template-columns: 1fr;
   }
 

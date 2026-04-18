@@ -5,6 +5,10 @@ const state = {
   isPointsOpen: false,
   pendingSeatClaim: null,
   autoJoinAttempted: false,
+  pendingRoomState: null,
+  trickPreviewLastCardId: null,
+  trickAnimationTimers: [],
+  trickAnimationToken: 0,
 };
 
 const body = document.body;
@@ -40,6 +44,9 @@ const dismissSeatClaimButton = document.getElementById("dismissSeatClaimButton")
 
 const MIN_PLAYERS = 4;
 const MAX_PLAYERS = 5;
+const TRICK_COLLECTION_PREVIEW_MS = 420;
+const TRICK_COLLECTION_DURATION_MS = 720;
+const TRICK_COLLECTION_STAGGER_MS = 55;
 
 const suitLabels = {
   spades: "Spades \u2660",
@@ -67,6 +74,10 @@ const pipLayouts = {
   "9": [2, 2, 1, 2, 2],
   "10": [2, 2, 2, 2, 2],
 };
+
+const trickAnimationLayer = document.createElement("div");
+trickAnimationLayer.className = "trick-animation-layer hidden";
+body.appendChild(trickAnimationLayer);
 
 function showMessage(message) {
   if (!message) {
@@ -287,7 +298,7 @@ function renderPlayers(room) {
         .join("");
 
       return `
-        <article class="player-card ${player.isTurn || player.isCurrentBidder ? "player-card--active" : ""}">
+        <article class="player-card ${player.isTurn || player.isCurrentBidder ? "player-card--active" : ""}" data-player-id="${player.id}">
           <div class="player-card__headline">
             <div class="player-name">${player.name}</div>
             <div class="player-card__tags">${tags || '<span class="player-tag">Ready</span>'}</div>
@@ -509,7 +520,7 @@ function buildCurrentTrickMarkup(room, compact = false) {
       ${room.currentTrick
         .map(
           ({ playerName, card }) => `
-            <article class="table-card">
+            <article class="table-card ${card.id === state.trickPreviewLastCardId ? "table-card--fresh" : ""}" data-card-id="${card.id}">
               ${renderCardFace(card, { playerName })}
             </article>
           `,
@@ -519,7 +530,7 @@ function buildCurrentTrickMarkup(room, compact = false) {
   `;
 }
 
-function buildLastTrickMarkup(room) {
+function buildLastTrickSummaryMarkup(room) {
   if (!room.lastTrick) {
     return "";
   }
@@ -536,7 +547,7 @@ function buildTableMarkup(room, { compact = false } = {}) {
     <div class="table-stack">
       ${compact ? '<h4 class="table-section-title">Table</h4>' : ""}
       ${buildCurrentTrickMarkup(room, compact)}
-      ${buildLastTrickMarkup(room)}
+      ${buildLastTrickSummaryMarkup(room)}
     </div>
   `;
 }
@@ -796,12 +807,180 @@ function renderPauseDialog(room) {
   body.classList.add("room-paused");
 }
 
+function clearTrickAnimationTimers() {
+  state.trickAnimationTimers.forEach((timerId) => window.clearTimeout(timerId));
+  state.trickAnimationTimers = [];
+}
+
+function scheduleTrickAnimationStep(callback, delay) {
+  const timerId = window.setTimeout(callback, delay);
+  state.trickAnimationTimers.push(timerId);
+  return timerId;
+}
+
+function clearTrickAnimationLayer() {
+  clearTrickAnimationTimers();
+  trickAnimationLayer.innerHTML = "";
+  trickAnimationLayer.classList.add("hidden");
+  state.trickPreviewLastCardId = null;
+  body.classList.remove("trick-animating");
+  body.classList.remove("trick-collecting");
+}
+
+function shouldAnimateCompletedTrick(previousRoom, nextRoom) {
+  if (!previousRoom || !nextRoom?.lastTrick) {
+    return false;
+  }
+
+  const previousLastTrickNumber = previousRoom.lastTrick?.number ?? 0;
+
+  return (
+    previousRoom.state === "playing" &&
+    nextRoom.lastTrick.number > previousLastTrickNumber &&
+    Array.isArray(nextRoom.lastTrick.cards) &&
+    nextRoom.lastTrick.cards.length === nextRoom.players.length
+  );
+}
+
+function getTrickAnimationSourceRect() {
+  const sourceElement =
+    roomPanel.querySelector(".controls-subpanel .table-card-grid") ||
+    roomPanel.querySelector(".table-subpanel .table-card-grid") ||
+    roomPanel.querySelector(".controls-subpanel .table-stack") ||
+    tableArea;
+
+  return sourceElement?.getBoundingClientRect() ?? null;
+}
+
+function getTrickAnimationSourceCards() {
+  const sourceGrid =
+    roomPanel.querySelector(".controls-subpanel .table-card-grid") ||
+    roomPanel.querySelector(".table-subpanel .table-card-grid");
+
+  return sourceGrid ? Array.from(sourceGrid.querySelectorAll(".table-card")) : [];
+}
+
+function buildCompletedTrickPreviewRoom(nextRoom) {
+  const previewCards = nextRoom.lastTrick?.cards ?? [];
+
+  if (!previewCards.length) {
+    return nextRoom;
+  }
+
+  return {
+    ...nextRoom,
+    currentTrick: previewCards,
+    lastTrick: null,
+  };
+}
+
+function flushPendingRoomState() {
+  const nextRoom = state.pendingRoomState;
+
+  state.pendingRoomState = null;
+  clearTrickAnimationLayer();
+
+  if (!nextRoom) {
+    return;
+  }
+
+  state.room = nextRoom;
+  renderRoom();
+}
+
+function animateCompletedTrick(nextRoom) {
+  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+    return false;
+  }
+
+  clearTrickAnimationLayer();
+
+  const previewCards = nextRoom.lastTrick?.cards ?? [];
+
+  if (!previewCards.length) {
+    return false;
+  }
+
+  state.pendingRoomState = nextRoom;
+  state.trickAnimationToken += 1;
+  state.trickPreviewLastCardId = previewCards.at(-1)?.card.id ?? null;
+  state.room = buildCompletedTrickPreviewRoom(nextRoom);
+  renderRoom();
+
+  const targetLabel = playersGrid.querySelector(`[data-player-id="${nextRoom.lastTrick.winnerId}"] .player-name`);
+  const sourceCards = getTrickAnimationSourceCards();
+  const sourceRect = getTrickAnimationSourceRect();
+
+  if (!sourceCards.length || !sourceRect || !targetLabel) {
+    state.pendingRoomState = null;
+    state.trickPreviewLastCardId = null;
+    return false;
+  }
+
+  body.classList.add("trick-animating");
+
+  const token = state.trickAnimationToken;
+  const targetRect = targetLabel.getBoundingClientRect();
+  const cards = previewCards;
+  const sourceCardRects = sourceCards.map((cardElement) => cardElement.getBoundingClientRect());
+  const fallbackCardWidth =
+    Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--card-width")) || 122;
+
+  trickAnimationLayer.classList.remove("hidden");
+  trickAnimationLayer.innerHTML = cards
+    .map(
+      ({ card, playerName }, index) => `
+        <article
+          class="trick-animation-card"
+          style="left:${sourceCardRects[index]?.left ?? sourceRect.left}px; top:${sourceCardRects[index]?.top ?? sourceRect.top}px; width:${sourceCardRects[index]?.width ?? fallbackCardWidth}px; --card-rotate-start:0deg; --card-rotate-end:${(index - (cards.length - 1) / 2) * 8}deg; transition-delay:${index * TRICK_COLLECTION_STAGGER_MS}ms;"
+        >
+          ${renderCardFace(card, { playerName })}
+        </article>
+      `,
+    )
+    .join("");
+
+  const animationCards = Array.from(trickAnimationLayer.querySelectorAll(".trick-animation-card"));
+
+  animationCards.forEach((cardElement, index) => {
+    const cardRect = cardElement.getBoundingClientRect();
+    const fanOffset = (index - (animationCards.length - 1) / 2) * 10;
+    const deltaX = targetRect.left + targetRect.width / 2 - (cardRect.left + cardRect.width / 2) + fanOffset;
+    const deltaY = targetRect.top + targetRect.height / 2 - (cardRect.top + cardRect.height / 2) - 10 + Math.abs(fanOffset) * 0.15;
+
+    cardElement.style.setProperty("--move-x", `${deltaX}px`);
+    cardElement.style.setProperty("--move-y", `${deltaY}px`);
+  });
+
+  scheduleTrickAnimationStep(() => {
+    if (token !== state.trickAnimationToken) {
+      return;
+    }
+
+    body.classList.add("trick-collecting");
+    animationCards.forEach((cardElement) => {
+      cardElement.classList.add("trick-animation-card--collect");
+    });
+  }, TRICK_COLLECTION_PREVIEW_MS);
+
+  scheduleTrickAnimationStep(() => {
+    if (token !== state.trickAnimationToken) {
+      return;
+    }
+
+    flushPendingRoomState();
+  }, TRICK_COLLECTION_PREVIEW_MS + TRICK_COLLECTION_DURATION_MS + animationCards.length * TRICK_COLLECTION_STAGGER_MS + 90);
+
+  return true;
+}
+
 function renderRoom() {
   const room = state.room;
 
   renderSeatClaimPanel();
 
   if (!room) {
+    clearTrickAnimationLayer();
     body.classList.remove("in-room");
     body.classList.remove("room-paused");
     setPointsOpen(false);
@@ -927,14 +1106,26 @@ if (socket) {
   });
 
   socket.on("roomState", (roomState) => {
-    state.room = roomState;
-    state.pendingSeatClaim = null;
     syncPartyUrl(roomState);
     showMessage("");
+    state.pendingSeatClaim = null;
+
+    if (state.pendingRoomState) {
+      state.pendingRoomState = roomState;
+      return;
+    }
+
+    if (shouldAnimateCompletedTrick(state.room, roomState) && animateCompletedTrick(roomState)) {
+      return;
+    }
+
+    state.room = roomState;
     renderRoom();
   });
 
   socket.on("seatSelectionRequired", (payload) => {
+    clearTrickAnimationLayer();
+    state.pendingRoomState = null;
     state.pendingSeatClaim = payload;
     state.room = null;
     nameInput.value = payload.requestedName || nameInput.value.trim();
